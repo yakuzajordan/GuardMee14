@@ -19,6 +19,15 @@ const aiRules = {
 // Seed public (uniquement si aucun admin n'existe)
 router.post('/seed', async (req, res, next) => {
   try {
+    const demoAccounts = {
+      admin: { email: 'admin@guardmee.cm', password: 'Admin@123' },
+      agent: { email: 'agent@guardmee.cm', password: 'Agent@123' },
+    };
+
+    if (isUsingDevStore()) {
+      return res.json({ success: true, message: 'Mode local actif - données de démo prêtes', accounts: demoAccounts });
+    }
+
     const existing = await User.findOne({ role: 'admin' });
     if (existing) {
       return res.json({ success: true, message: 'Données déjà initialisées' });
@@ -43,14 +52,7 @@ router.post('/seed', async (req, res, next) => {
       isPhoneVerified: true,
     });
 
-    res.json({
-      success: true,
-      message: 'Comptes de démo créés',
-      accounts: {
-        admin: { email: 'admin@guardmee.cm', password: 'Admin@123' },
-        agent: { email: 'agent@guardmee.cm', password: 'Agent@123' },
-      },
-    });
+    res.json({ success: true, message: 'Comptes de démo créés', accounts: demoAccounts });
   } catch (err) {
     next(err);
   }

@@ -10,13 +10,13 @@ export default function Card({
   return (
     <div
       onClick={onClick}
-      className={`
-        bg-white/80 backdrop-blur-sm rounded-2xl border border-gray-200/80
-        shadow-sm shadow-gray-200/50
-        ${padding ? 'p-5 sm:p-6' : ''}
-        ${interactive ? 'card-hover cursor-pointer' : ''}
-        ${className}
-      `}
+      className={[
+        'bg-white/85 backdrop-blur-sm rounded-2xl border border-gray-200/80',
+        'shadow-sm shadow-gray-100/80',
+        padding ? 'p-5 sm:p-6' : '',
+        interactive ? 'card-hover cursor-pointer' : '',
+        className,
+      ].filter(Boolean).join(' ')}
       {...props}
     >
       {children}

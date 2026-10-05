@@ -1,5 +1,6 @@
 import { initializeApp, getApps } from 'firebase/app';
 import { getAuth, GoogleAuthProvider } from 'firebase/auth';
+import { getFirestore } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 import { getMessaging, isSupported } from 'firebase/messaging';
 
@@ -17,6 +18,7 @@ export const isFirebaseConfigured = () =>
 
 let app = null;
 let auth = null;
+let db = null;
 let storage = null;
 let messaging = null;
 let googleProvider = null;
@@ -24,6 +26,7 @@ let googleProvider = null;
 if (isFirebaseConfigured()) {
   app = getApps().length ? getApps()[0] : initializeApp(firebaseConfig);
   auth = getAuth(app);
+  db = getFirestore(app);
   storage = getStorage(app);
   googleProvider = new GoogleAuthProvider();
   googleProvider.setCustomParameters({ prompt: 'select_account' });
@@ -36,4 +39,4 @@ export const getFirebaseMessaging = async () => {
   return messaging;
 };
 
-export { app, auth, storage, googleProvider };
+export { app, auth, db, storage, googleProvider };

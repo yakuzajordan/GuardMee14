@@ -1,22 +1,33 @@
 import { Link, useLocation } from 'react-router-dom';
-import { Home, Map, AlertTriangle, LayoutDashboard } from 'lucide-react';
+import { Home, Map, AlertTriangle, LayoutDashboard, History } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { useI18n } from '../context/i18nContext';
 
 export default function MobileNav() {
   const location = useLocation();
   const { isAuthenticated, user } = useAuth();
+  const { t } = useI18n();
 
   if (!isAuthenticated) return null;
 
   const dashboardPath = user?.role === 'admin' ? '/admin'
     : ['agent', 'moderateur'].includes(user?.role) ? '/agent' : '/dashboard';
 
-  const links = [
-    { to: dashboardPath, icon: Home, label: 'Accueil' },
-    { to: '/carte', icon: Map, label: 'Carte' },
-    { to: '/signaler', icon: AlertTriangle, label: 'Signaler', highlight: true },
-    { to: '/dashboard', icon: LayoutDashboard, label: 'Profil' },
-  ];
+  const isCitizen = user?.role === 'citoyen';
+
+  const links = isCitizen
+    ? [
+        { to: dashboardPath, icon: Home, label: t('nav.dashboard') },
+        { to: '/carte', icon: Map, label: t('nav.map') },
+        { to: '/signaler', icon: AlertTriangle, label: t('nav.report'), highlight: true },
+        { to: '/historique', icon: History, label: 'Historique' },
+      ]
+    : [
+        { to: dashboardPath, icon: Home, label: t('nav.dashboard') },
+        { to: '/carte', icon: Map, label: t('nav.map') },
+        { to: '/signaler', icon: AlertTriangle, label: t('nav.report'), highlight: true },
+        { to: dashboardPath, icon: LayoutDashboard, label: 'Profil' },
+      ];
 
   return (
     <nav className="mobile-nav-bar md:hidden fixed bottom-0 left-0 right-0 z-50 safe-area-bottom">

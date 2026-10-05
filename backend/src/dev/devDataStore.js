@@ -99,7 +99,7 @@ export const seedDevData = async () => {
     },
     {
       _id: 'inc-005',
-      type: 'eboulement',
+      type: 'inondation',
       description: 'Glissement de terrain mineur sur l\'axe lourd Bafoussam.',
       location: {
         type: 'Point',

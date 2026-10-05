@@ -1,70 +1,60 @@
 import { createContext, useContext, useEffect, useState, useCallback } from 'react';
-import { io } from 'socket.io-client';
 import { useAuth } from './AuthContext';
-import { notificationAPI } from '../services/api';
+import { subscribeToIncidents, subscribeToNotifications, markNotificationRead, markAllNotificationsRead } from '../services/firestoreDB';
 
 const SocketContext = createContext(null);
 
-const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || 'http://localhost:5000';
-
 export const SocketProvider = ({ children }) => {
-  const { isAuthenticated } = useAuth();
-  const [socket, setSocket] = useState(null);
+  const { isAuthenticated, user } = useAuth();
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [liveIncidents, setLiveIncidents] = useState([]);
 
+  // Subscribe to incidents in real-time (Firestore onSnapshot)
   useEffect(() => {
-    if (!isAuthenticated) return;
+    const unsubscribe = subscribeToIncidents((incidents) => {
+      setLiveIncidents(incidents);
+    });
+    return unsubscribe;
+  }, []);
 
-    const s = io(SOCKET_URL, {
-      auth: { token: localStorage.getItem('guardmee_token') },
-      transports: ['websocket', 'polling'],
-    });
-
-    s.on('connect', () => console.log('Socket connecté'));
-    s.on('notification', (notif) => {
-      setNotifications((prev) => [notif, ...prev]);
-      setUnreadCount((c) => c + 1);
-    });
-    s.on('incident:new', (incident) => {
-      setLiveIncidents((prev) => [incident, ...prev]);
-    });
-    s.on('incident:update', (incident) => {
-      setLiveIncidents((prev) =>
-        prev.map((i) => (i._id === incident._id ? incident : i))
-      );
-    });
-    s.on('incident:validated', (incident) => {
-      setLiveIncidents((prev) =>
-        prev.map((i) => (i._id === incident._id ? incident : i))
-      );
-    });
-
-    setSocket(s);
-    return () => s.disconnect();
-  }, [isAuthenticated]);
-
+  // Subscribe to notifications when authenticated
   useEffect(() => {
-    if (!isAuthenticated) return;
-    notificationAPI.list().then((res) => {
-      setNotifications(res.data.notifications);
-      setUnreadCount(res.data.unreadCount);
-    }).catch(() => {});
-  }, [isAuthenticated]);
+    if (!isAuthenticated || !user?._id) return;
+
+    const unsubscribe = subscribeToNotifications(user._id, ({ notifications: notifs, unreadCount: count }) => {
+      setNotifications(notifs);
+      setUnreadCount(count);
+    });
+
+    return unsubscribe;
+  }, [isAuthenticated, user?._id]);
 
   const markRead = useCallback(async (id) => {
-    await notificationAPI.markRead(id);
+    if (!user?._id) return;
+    await markNotificationRead(user._id, id);
     setNotifications((prev) =>
       prev.map((n) => (n._id === id ? { ...n, isRead: true } : n))
     );
     setUnreadCount((c) => Math.max(0, c - 1));
-  }, []);
+  }, [user?._id]);
+
+  const markAllRead = useCallback(async () => {
+    if (!user?._id) return;
+    await markAllNotificationsRead(user._id);
+    setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })));
+    setUnreadCount(0);
+  }, [user?._id]);
 
   return (
     <SocketContext.Provider value={{
-      socket, notifications, unreadCount, liveIncidents, markRead,
+      socket: null,
+      notifications,
+      unreadCount,
+      liveIncidents,
       setLiveIncidents,
+      markRead,
+      markAllRead,
     }}>
       {children}
     </SocketContext.Provider>

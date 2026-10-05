@@ -1,51 +1,49 @@
 import {
   signInWithPopup,
-  signInWithEmailAndPassword,
-  createUserWithEmailAndPassword,
   signInWithPhoneNumber,
   RecaptchaVerifier,
   signOut,
   updateProfile,
 } from 'firebase/auth';
 import { auth, googleProvider, isFirebaseConfigured } from '../config/firebase';
-import { authAPI } from './api';
+import * as firestoreDB from './firestoreDB';
 
-const syncWithBackend = async (firebaseUser, extra = {}) => {
-  const idToken = await firebaseUser.getIdToken();
-  const res = await authAPI.firebaseLogin({
-    idToken,
-    name: extra.name || firebaseUser.displayName,
-    phone: extra.phone,
-  });
-  localStorage.setItem('guardmee_token', res.data.token);
-  localStorage.setItem('guardmee_user', JSON.stringify(res.data.user));
-  return res.data;
+const syncProfile = async (firebaseUser, extra = {}) => {
+  let profile = await firestoreDB.getUserProfile(firebaseUser.uid);
+  if (!profile) {
+    profile = await firestoreDB.createUserProfile(firebaseUser.uid, {
+      name: extra.name || firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'Utilisateur',
+      email: firebaseUser.email,
+      phone: extra.phone || firebaseUser.phoneNumber,
+      avatar: firebaseUser.photoURL || '',
+      isEmailVerified: firebaseUser.emailVerified,
+      isPhoneVerified: !!firebaseUser.phoneNumber,
+    });
+  } else {
+    const updates = { updatedAt: new Date().toISOString() };
+    if (extra.name) updates.name = extra.name;
+    if (firebaseUser.photoURL && !profile.avatar) updates.avatar = firebaseUser.photoURL;
+    await firestoreDB.updateUserProfile(firebaseUser.uid, updates);
+    profile = { ...profile, ...updates };
+  }
+  localStorage.setItem('guardmee_uid', firebaseUser.uid);
+  localStorage.setItem('guardmee_user', JSON.stringify(profile));
+  return { user: profile };
 };
 
 export const loginWithGoogle = async () => {
   if (!isFirebaseConfigured()) throw new Error('Firebase non configuré');
   const result = await signInWithPopup(auth, googleProvider);
-  return syncWithBackend(result.user);
-};
-
-export const loginWithEmail = async (email, password) => {
-  if (!isFirebaseConfigured()) throw new Error('Firebase non configuré');
-  const result = await signInWithEmailAndPassword(auth, email, password);
-  return syncWithBackend(result.user);
-};
-
-export const registerWithEmail = async (name, email, password) => {
-  if (!isFirebaseConfigured()) throw new Error('Firebase non configuré');
-  const result = await createUserWithEmailAndPassword(auth, email, password);
-  await updateProfile(result.user, { displayName: name });
-  return syncWithBackend(result.user, { name });
+  return syncProfile(result.user);
 };
 
 let recaptchaVerifier = null;
 
 export const initPhoneRecaptcha = (containerId = 'recaptcha-container') => {
   if (!isFirebaseConfigured()) return null;
-  if (recaptchaVerifier) recaptchaVerifier.clear();
+  if (recaptchaVerifier) {
+    try { recaptchaVerifier.clear(); } catch { /* ignore */ }
+  }
   recaptchaVerifier = new RecaptchaVerifier(auth, containerId, {
     size: 'invisible',
     callback: () => {},
@@ -62,7 +60,7 @@ export const loginWithPhone = async (phoneNumber) => {
 
 export const confirmPhoneCode = async (confirmationResult, code, name) => {
   const result = await confirmationResult.confirm(code);
-  return syncWithBackend(result.user, { name, phone: result.user.phoneNumber });
+  return syncProfile(result.user, { name, phone: result.user.phoneNumber });
 };
 
 export const logoutFirebase = async () => {

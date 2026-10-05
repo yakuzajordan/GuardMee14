@@ -1,103 +1,277 @@
-import axios from 'axios';
+import * as db from './firestoreDB';
+import { uploadMultipleMedia } from './storageService';
+import { isFirebaseConfigured } from '../config/firebase';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
-
-const api = axios.create({
-  baseURL: API_URL,
-  headers: { 'Content-Type': 'application/json' },
-  timeout: 15000,
-});
-
-const isAuthRequest = (url = '') =>
-  url.includes('/auth/login') || url.includes('/auth/register') || url.includes('/auth/firebase');
-
-api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('guardmee_token');
-  if (token) config.headers.Authorization = `Bearer ${token}`;
-  return config;
-});
-
-api.interceptors.response.use(
-  (res) => res,
-  (err) => {
-    if (err.response?.status === 401 && !isAuthRequest(err.config?.url)) {
-      localStorage.removeItem('guardmee_token');
-      localStorage.removeItem('guardmee_user');
-      if (!window.location.pathname.includes('/connexion')) {
-        window.location.href = '/connexion';
-      }
-    }
-    return Promise.reject(err);
-  }
-);
+// Helper: wrap Firestore results in the {data: ...} format that pages expect
+const wrap = (data) => ({ data });
 
 export const getApiErrorMessage = (err, fallback = 'Une erreur est survenue') => {
-  if (!err.response) {
-    return 'Serveur inaccessible. Démarrez le backend : cd backend && npm run dev';
-  }
-  return err.response?.data?.message || err.message || fallback;
+  if (!isFirebaseConfigured()) return 'Firebase non configuré. Ajoutez vos clés dans .env';
+  return err?.message || fallback;
 };
 
-export default api;
+// ─── Auth API (handled via AuthContext, kept for VerifySMSPage compat) ─────────
 
 export const authAPI = {
-  register: (data) => api.post('/auth/register', data),
-  login: (data) => api.post('/auth/login', data),
-  me: () => api.get('/auth/me'),
-  verifySMS: (code) => api.post('/auth/verify-sms', { code }),
-  resendSMS: () => api.post('/auth/resend-sms'),
-  updateProfile: (data) => api.put('/auth/profile', data),
-  enable2FA: () => api.post('/auth/2fa/enable'),
-  confirm2FA: (code) => api.post('/auth/2fa/confirm', { code }),
-  socialLogin: (data) => api.post('/auth/social', data),
-  firebaseLogin: (data) => api.post('/auth/firebase', data),
-  saveFCMToken: (token) => api.put('/auth/fcm-token', { token }),
+  verifySMS: async () => wrap({ success: true }),
+  resendSMS: async () => wrap({ success: true }),
+  saveFCMToken: async (token) => {
+    const uid = localStorage.getItem('guardmee_uid');
+    if (uid && token) await db.saveFCMTokenToFirestore(uid, token);
+    return wrap({ success: true });
+  },
 };
+
+// ─── Incidents ──────────────────────────────────────────────────────────────
 
 export const incidentAPI = {
-  create: (formData) => api.post('/incidents', formData, {
-    headers: { 'Content-Type': 'multipart/form-data' },
-  }),
-  list: (params) => api.get('/incidents', { params }),
-  get: (id) => api.get(`/incidents/${id}`),
-  mine: () => api.get('/incidents/mine'),
-  heatmap: (params) => api.get('/incidents/heatmap', { params }),
-  sync: (incidents) => api.post('/incidents/sync', { incidents }),
-  updateIntervention: (id, data) => api.put(`/incidents/${id}/intervention`, data),
+  create: async (formData) => {
+    const uid = localStorage.getItem('guardmee_uid');
+    const reporter = uid ? JSON.parse(localStorage.getItem('guardmee_user') || '{}') : null;
+
+    const fields = {};
+    if (formData instanceof FormData) {
+      for (const [k, v] of formData.entries()) {
+        if (k !== 'media') fields[k] = v;
+      }
+    } else {
+      Object.assign(fields, formData);
+    }
+
+    const incident = await db.createIncident(fields, reporter?._id ? reporter : null);
+
+    const mediaFiles = formData instanceof FormData ? formData.getAll('media') : [];
+    if (mediaFiles.length > 0) {
+      const uploaded = await uploadMultipleMedia(mediaFiles, incident._id);
+      if (uploaded.length > 0) {
+        await db.updateIncident(incident._id, { media: uploaded });
+        incident.media = uploaded;
+      }
+    }
+
+    return wrap({ success: true, incident });
+  },
+
+  list: async (params = {}) => {
+    const result = await db.getIncidents(params);
+    return wrap({ success: true, ...result });
+  },
+
+  get: async (id) => {
+    const incident = await db.getIncident(id);
+    if (!incident) throw new Error('Incident non trouvé');
+    return wrap({ success: true, incident });
+  },
+
+  mine: async () => {
+    const uid = localStorage.getItem('guardmee_uid');
+    if (!uid) return wrap({ success: true, incidents: [] });
+    const incidents = await db.getUserIncidents(uid);
+    return wrap({ success: true, incidents });
+  },
+
+  heatmap: async (params = {}) => {
+    const points = await db.getHeatmapPoints();
+    return wrap({ success: true, points });
+  },
+
+  sync: async (incidents) => {
+    const uid = localStorage.getItem('guardmee_uid');
+    if (!uid) throw new Error('Non authentifié');
+    const synced = await db.syncIncidents(incidents, uid);
+    return wrap({ success: true, incidents: synced });
+  },
+
+  updateIntervention: async (id, data) => {
+    const { status, notes, teamId } = data;
+    const uid = localStorage.getItem('guardmee_uid');
+    const updates = {
+      intervention: { status, notes, teamId, startedAt: new Date().toISOString() },
+      status: status === 'terminee' ? 'resolu' : 'en_cours',
+      assignedAgentId: uid,
+    };
+    const incident = await db.updateIncident(id, updates);
+    return wrap({ success: true, incident });
+  },
 };
+
+// ─── Moderation ─────────────────────────────────────────────────────────────
 
 export const moderationAPI = {
-  pending: (params) => api.get('/moderation/pending', { params }),
-  validate: (id, notes) => api.put(`/moderation/${id}/validate`, { notes }),
-  reject: (id, reason) => api.put(`/moderation/${id}/reject`, { reason }),
-  requestInfo: (id, message) => api.put(`/moderation/${id}/request-info`, { message }),
+  pending: async (params = {}) => {
+    const result = await db.getPendingIncidents(params);
+    return wrap({ success: true, ...result });
+  },
+
+  validate: async (id, notes) => {
+    const uid = localStorage.getItem('guardmee_uid');
+    const incident = await db.updateIncident(id, {
+      status: 'valide',
+      moderationNotes: notes || '',
+      moderatedById: uid,
+      moderatedAt: new Date().toISOString(),
+      validatedAt: new Date().toISOString(),
+    });
+    return wrap({ success: true, incident });
+  },
+
+  reject: async (id, reason) => {
+    const uid = localStorage.getItem('guardmee_uid');
+    const incident = await db.updateIncident(id, {
+      status: 'rejete',
+      moderationNotes: reason || '',
+      moderatedById: uid,
+      moderatedAt: new Date().toISOString(),
+    });
+    return wrap({ success: true, incident });
+  },
+
+  requestInfo: async (id, message) => {
+    const uid = localStorage.getItem('guardmee_uid');
+    const incident = await db.updateIncident(id, {
+      status: 'info_requise',
+      moderationNotes: message || '',
+      moderatedById: uid,
+      moderatedAt: new Date().toISOString(),
+    });
+    return wrap({ success: true, incident });
+  },
 };
+
+// ─── Alerts ─────────────────────────────────────────────────────────────────
 
 export const alertAPI = {
-  list: (params) => api.get('/alerts', { params }),
-  create: (data) => api.post('/alerts', data),
-  deactivate: (id) => api.put(`/alerts/${id}/deactivate`),
+  list: async (params = {}) => {
+    const alerts = await db.getAlerts(params);
+    return wrap({ success: true, alerts });
+  },
+
+  create: async (data) => {
+    const uid = localStorage.getItem('guardmee_uid');
+    const alert = await db.createAlert(data, uid);
+    return wrap({ success: true, alert });
+  },
+
+  deactivate: async (id) => {
+    await db.deactivateAlert(id);
+    return wrap({ success: true });
+  },
 };
+
+// ─── Resources ──────────────────────────────────────────────────────────────
 
 export const resourceAPI = {
-  list: (params) => api.get('/resources', { params }),
-  create: (data) => api.post('/resources', data),
-  assign: (id, incidentId) => api.put(`/resources/${id}/assign`, { incidentId }),
-  updateStatus: (id, status) => api.put(`/resources/${id}/status`, { status }),
+  list: async (params = {}) => {
+    const resources = await db.getResources(params);
+    return wrap({ success: true, resources });
+  },
+
+  create: async (data) => {
+    const user = JSON.parse(localStorage.getItem('guardmee_user') || '{}');
+    const resource = await db.createResource(data, user._id, user.name);
+    return wrap({ success: true, resource });
+  },
+
+  assign: async (id, incidentId) => {
+    await db.updateResource(id, { assignedIncidentId: incidentId, status: 'en_mission' });
+    return wrap({ success: true });
+  },
+
+  updateStatus: async (id, status) => {
+    await db.updateResource(id, { status, assignedIncidentId: status === 'disponible' ? null : undefined });
+    return wrap({ success: true });
+  },
 };
+
+// ─── Notifications ───────────────────────────────────────────────────────────
 
 export const notificationAPI = {
-  list: (params) => api.get('/notifications', { params }),
-  markRead: (id) => api.put(`/notifications/${id}/read`),
-  markAllRead: () => api.put('/notifications/read-all'),
+  list: async () => {
+    const uid = localStorage.getItem('guardmee_uid');
+    if (!uid) return wrap({ notifications: [], unreadCount: 0 });
+    const result = await db.getNotifications(uid);
+    return wrap({ success: true, ...result });
+  },
+
+  markRead: async (id) => {
+    const uid = localStorage.getItem('guardmee_uid');
+    if (!uid) return wrap({ success: true });
+    await db.markNotificationRead(uid, id);
+    return wrap({ success: true });
+  },
+
+  markAllRead: async () => {
+    const uid = localStorage.getItem('guardmee_uid');
+    if (!uid) return wrap({ success: true });
+    await db.markAllNotificationsRead(uid);
+    return wrap({ success: true });
+  },
 };
 
+// ─── Admin ───────────────────────────────────────────────────────────────────
+
 export const adminAPI = {
-  stats: (params) => api.get('/admin/stats', { params }),
-  users: (params) => api.get('/admin/users', { params }),
-  updateRole: (id, role) => api.put(`/admin/users/${id}/role`, { role }),
-  updateStatus: (id, isActive) => api.put(`/admin/users/${id}/status`, { isActive }),
-  getAIRules: () => api.get('/admin/ai-rules'),
-  updateAIRules: (rules) => api.put('/admin/ai-rules', rules),
-  seed: () => api.post('/admin/seed'),
+  stats: async () => {
+    const stats = await db.getAdminStats();
+    return wrap({ success: true, stats });
+  },
+
+  users: async (params = {}) => {
+    const result = await db.getUsers(params);
+    return wrap({ success: true, ...result });
+  },
+
+  updateRole: async (id, role) => {
+    await db.updateUserRole(id, role);
+    return wrap({ success: true });
+  },
+
+  updateStatus: async (id, isActive) => {
+    await db.updateUserStatus(id, isActive);
+    return wrap({ success: true });
+  },
+
+  getAIRules: async () => {
+    const rules = await db.getAIConfig();
+    return wrap({ success: true, rules });
+  },
+
+  updateAIRules: async (rules) => {
+    await db.saveAIConfig(rules);
+    return wrap({ success: true, rules });
+  },
+
+  seed: async () => {
+    const result = await db.seedDemoData();
+    return wrap({ success: true, ...result });
+  },
 };
+
+// ─── Messages ────────────────────────────────────────────────────────────────
+
+export const messageAPI = {
+  list: async (incidentId) => {
+    const messages = await db.getMessages(incidentId);
+    return wrap({ success: true, messages });
+  },
+
+  send: async (incidentId, { text, senderId, senderName, senderRole }) => {
+    const message = await db.sendMessage(incidentId, { text, senderId, senderName, senderRole });
+    return wrap({ success: true, message });
+  },
+
+  subscribe: (incidentId, callback) => db.subscribeToMessages(incidentId, callback),
+};
+
+// ─── History (paginated) ─────────────────────────────────────────────────────
+
+export const historyAPI = {
+  list: async (params = {}) => {
+    const uid = localStorage.getItem('guardmee_uid');
+    if (!uid) return wrap({ success: true, incidents: [], total: 0 });
+    const result = await db.getUserIncidentsPaginated(uid, params);
+    return wrap({ success: true, ...result });
+  },
+};
+
+export default { authAPI, incidentAPI, moderationAPI, alertAPI, resourceAPI, notificationAPI, adminAPI };

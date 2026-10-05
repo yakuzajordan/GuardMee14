@@ -1,6 +1,6 @@
 import { getToken, onMessage } from 'firebase/messaging';
 import { getFirebaseMessaging, isFirebaseConfigured } from '../config/firebase';
-import { authAPI } from './api';
+import { saveFCMTokenToFirestore } from './firestoreDB';
 
 export const requestFCMPermission = async () => {
   if (!isFirebaseConfigured()) return null;
@@ -13,10 +13,7 @@ export const requestFCMPermission = async () => {
   if (!messaging) return null;
 
   const vapidKey = import.meta.env.VITE_FIREBASE_VAPID_KEY;
-  if (!vapidKey) {
-    console.warn('VITE_FIREBASE_VAPID_KEY manquant pour FCM');
-    return null;
-  }
+  if (!vapidKey) return null;
 
   try {
     const token = await getToken(messaging, {
@@ -25,7 +22,8 @@ export const requestFCMPermission = async () => {
     });
 
     if (token) {
-      await authAPI.saveFCMToken(token);
+      const uid = localStorage.getItem('guardmee_uid');
+      if (uid) await saveFCMTokenToFirestore(uid, token);
     }
     return token;
   } catch (err) {

@@ -6,16 +6,6 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
     port: 5173,
-    proxy: {
-      '/api': {
-        target: 'http://localhost:5000',
-        changeOrigin: true,
-      },
-      '/uploads': {
-        target: 'http://localhost:5000',
-        changeOrigin: true,
-      },
-    },
   },
   build: {
     chunkSizeWarningLimit: 800,
@@ -25,7 +15,7 @@ export default defineConfig({
           'vendor-react': ['react', 'react-dom', 'react-router-dom'],
           'vendor-leaflet': ['leaflet', 'react-leaflet'],
           'vendor-charts': ['recharts'],
-          'vendor-firebase': ['firebase/app', 'firebase/auth', 'firebase/messaging'],
+          'vendor-firebase': ['firebase/app', 'firebase/auth', 'firebase/firestore', 'firebase/storage', 'firebase/messaging'],
         },
       },
     },
