@@ -41,7 +41,7 @@ export const formatPhone = (phone) => {
 };
 
 export const formatDate = (date) =>
-  new Date(date).toLocaleString('fr-CM', {
+  new Date(date?.toDate ? date.toDate() : date).toLocaleString('fr-CM', {
     day: '2-digit', month: 'short', year: 'numeric',
     hour: '2-digit', minute: '2-digit',
   });
